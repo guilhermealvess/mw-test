@@ -3,9 +3,12 @@ package mw
 import (
 	"context"
 	"encoding/json"
+	"log"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type rabbitMQEvent struct {
@@ -33,23 +36,61 @@ type rabbitMQRouter struct {
 	name       string
 	workerPool int
 	handler    HandlerFunction
+	connection *amqp.Connection
+	msgs       sync.Map
+}
+
+func connectToRabbitMQ(uri string) (*amqp.Connection, error) {
+	conn, err := amqp.Dial(uri)
+	if err != nil {
+		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+		return nil, err
+	}
+	return conn, nil
 }
 
 func (r *rabbitMQRouter) Commit(e Event) error {
-	// TODO:
+	msg, ok := r.msgs.Load(e.ID())
+	if !ok {
+		return nil
+	}
+
+	if err := msg.(*amqp.Delivery).Ack(false); err != nil {
+		return err
+	}
+
+	r.msgs.Delete(e.ID())
 	return nil
 }
 
 func (r *rabbitMQRouter) Producer(buffer chan<- Event) {
-	// TODO:
-	for {
+	ch, err := r.connection.Channel()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	msgs, err := ch.Consume(
+		r.queue,
+		r.name,
+		r.autoCommit,
+		false,
+		false,
+		false,
+		nil,
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for msg := range msgs {
 		e := rabbitMQEvent{
 			ctx:     context.Background(),
 			id:      uuid.NewString(),
-			content: json.RawMessage(`{}`),
+			content: msg.Body,
 		}
+		r.msgs.Store(e.ID(), msg)
 		buffer <- &e
-		time.Sleep(time.Second)
 	}
 }
 
@@ -81,6 +122,12 @@ func (r *RabbitMQBuilder) WorkerPool(n int) *RabbitMQBuilder {
 }
 
 func (r *RabbitMQBuilder) Build() *rabbitMQRouter {
+	conn, err := connectToRabbitMQ("amqp://guest:guest@localhost:5672/")
+	if err != nil {
+		log.Fatalf("Failed to create router: %v", err)
+		return nil
+	}
+
 	return &rabbitMQRouter{
 		queue:      r.queueName,
 		timeout:    r.timeout,
@@ -88,6 +135,7 @@ func (r *RabbitMQBuilder) Build() *rabbitMQRouter {
 		name:       r.workerName,
 		handler:    r.handler,
 		workerPool: r.workerPool,
+		connection: conn,
 	}
 }
 
