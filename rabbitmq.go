@@ -24,7 +24,7 @@ func (r *rabbitMQEvent) SetContext(ctx context.Context) {
 func (r *rabbitMQEvent) Context() context.Context { return r.ctx }
 
 func (r *rabbitMQEvent) Bind(v interface{}) error {
-	return json.Unmarshal(nil, v)
+	return json.Unmarshal(r.content, v)
 }
 
 func (r *rabbitMQEvent) ID() string { return r.id }
