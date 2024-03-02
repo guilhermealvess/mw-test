@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +14,7 @@ type rabbitMQEvent struct {
 	ctx     context.Context
 	id      string
 	content []byte
+	msg     *amqp.Delivery
 }
 
 func (r *rabbitMQEvent) SetContext(ctx context.Context) {
@@ -37,7 +37,6 @@ type rabbitMQRouter struct {
 	workerPool int
 	handler    HandlerFunction
 	connection *amqp.Connection
-	msgs       sync.Map
 }
 
 func connectToRabbitMQ(uri string) (*amqp.Connection, error) {
@@ -50,16 +49,9 @@ func connectToRabbitMQ(uri string) (*amqp.Connection, error) {
 }
 
 func (r *rabbitMQRouter) Commit(e Event) error {
-	msg, ok := r.msgs.Load(e.ID())
-	if !ok {
-		return nil
-	}
-
-	if err := msg.(*amqp.Delivery).Ack(false); err != nil {
+	if err := e.(*rabbitMQEvent).msg.Ack(false); err != nil {
 		return err
 	}
-
-	r.msgs.Delete(e.ID())
 	return nil
 }
 
@@ -84,13 +76,13 @@ func (r *rabbitMQRouter) Producer(buffer chan<- Event) {
 	}
 
 	for msg := range msgs {
-		e := rabbitMQEvent{
+		event := rabbitMQEvent{
 			ctx:     context.Background(),
 			id:      uuid.NewString(),
 			content: msg.Body,
+			msg:     &msg,
 		}
-		r.msgs.Store(e.ID(), msg)
-		buffer <- &e
+		buffer <- &event
 	}
 }
 
