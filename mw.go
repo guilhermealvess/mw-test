@@ -1,8 +1,9 @@
 package mw
 
+import "sync"
+
 type manager struct {
-	routers  []Router
-	poolSize int
+	routers []Router
 }
 
 func New() *manager {
@@ -12,7 +13,6 @@ func New() *manager {
 }
 
 func (m *manager) Register(r Router) {
-	m.poolSize += r.Pool()
 	m.routers = append(m.routers, r)
 }
 
@@ -30,17 +30,19 @@ func (m *manager) consumer(router Router, buffer <-chan Event) {
 	}
 }
 
-func (m *manager) producer(router Router, buffer chan<- Event) {
-	go router.Producer(buffer)
+func (m *manager) producer(router Router, buffer chan<- Event, wg *sync.WaitGroup) {
+	router.Producer(buffer)
+	wg.Done()
 }
 
 func (m *manager) Run() {
+	wg := sync.WaitGroup{}
 	for _, router := range m.routers {
-		buffer := make(chan Event, m.poolSize)
+		wg.Add(1)
+		buffer := make(chan Event, router.Pool())
 		go m.consumer(router, buffer)
-		go m.producer(router, buffer)
+		go m.producer(router, buffer, &wg)
 	}
 
-	for {
-	}
+	wg.Wait()
 }

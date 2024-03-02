@@ -39,15 +39,6 @@ type rabbitMQRouter struct {
 	connection *amqp.Connection
 }
 
-func connectToRabbitMQ(uri string) (*amqp.Connection, error) {
-	conn, err := amqp.Dial(uri)
-	if err != nil {
-		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
-		return nil, err
-	}
-	return conn, nil
-}
-
 func (r *rabbitMQRouter) Commit(e Event) error {
 	if err := e.(*rabbitMQEvent).msg.Ack(false); err != nil {
 		return err
@@ -58,7 +49,7 @@ func (r *rabbitMQRouter) Commit(e Event) error {
 func (r *rabbitMQRouter) Producer(buffer chan<- Event) {
 	ch, err := r.connection.Channel()
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 
 	msgs, err := ch.Consume(
@@ -72,17 +63,18 @@ func (r *rabbitMQRouter) Producer(buffer chan<- Event) {
 	)
 
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 
+	defer ch.Close()
+
 	for msg := range msgs {
-		event := rabbitMQEvent{
+		buffer <- &rabbitMQEvent{
 			ctx:     context.Background(),
 			id:      uuid.NewString(),
 			content: msg.Body,
 			msg:     &msg,
 		}
-		buffer <- &event
 	}
 }
 
@@ -96,6 +88,7 @@ type RabbitMQBuilder struct {
 	autocommit            bool
 	handler               HandlerFunction
 	workerPool            int
+	conn                  *amqp.Connection
 }
 
 func (r *RabbitMQBuilder) Timeout(t time.Duration) *RabbitMQBuilder {
@@ -114,12 +107,6 @@ func (r *RabbitMQBuilder) WorkerPool(n int) *RabbitMQBuilder {
 }
 
 func (r *RabbitMQBuilder) Build() *rabbitMQRouter {
-	conn, err := connectToRabbitMQ("amqp://guest:guest@localhost:5672/")
-	if err != nil {
-		log.Fatalf("Failed to create router: %v", err)
-		return nil
-	}
-
 	return &rabbitMQRouter{
 		queue:      r.queueName,
 		timeout:    r.timeout,
@@ -127,11 +114,11 @@ func (r *RabbitMQBuilder) Build() *rabbitMQRouter {
 		name:       r.workerName,
 		handler:    r.handler,
 		workerPool: r.workerPool,
-		connection: conn,
+		connection: r.conn,
 	}
 }
 
-func NewRabbitMQBuilder(name, queue string, handler HandlerFunction) *RabbitMQBuilder {
+func NewRabbitMQBuilder(name, queue string, handler HandlerFunction, conn *amqp.Connection) *RabbitMQBuilder {
 	return &RabbitMQBuilder{
 		workerName: name,
 		queueName:  queue,
@@ -139,5 +126,15 @@ func NewRabbitMQBuilder(name, queue string, handler HandlerFunction) *RabbitMQBu
 		autocommit: false,
 		handler:    handler,
 		workerPool: 10,
+		conn:       conn,
 	}
+}
+
+func NewConnectRabbitMQ(uri string) (*amqp.Connection, error) {
+	conn, err := amqp.Dial(uri)
+	if err != nil {
+		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+		return nil, err
+	}
+	return conn, nil
 }
