@@ -12,8 +12,8 @@ func New() *manager {
 	}
 }
 
-func (m *manager) Register(r Router) {
-	m.routers = append(m.routers, r)
+func (m *manager) Register(r ...Router) {
+	m.routers = append(m.routers, r...)
 }
 
 func (m *manager) consumer(router Router, buffer <-chan Event) {

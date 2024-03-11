@@ -82,54 +82,6 @@ func (r *rabbitMQRouter) Handler() HandlerFunction { return r.handler }
 
 func (r *rabbitMQRouter) Pool() int { return r.workerPool }
 
-type RabbitMQBuilder struct {
-	workerName, queueName string
-	timeout               time.Duration
-	autocommit            bool
-	handler               HandlerFunction
-	workerPool            int
-	conn                  *amqp.Connection
-}
-
-func (r *RabbitMQBuilder) Timeout(t time.Duration) *RabbitMQBuilder {
-	r.timeout = t
-	return r
-}
-
-func (r *RabbitMQBuilder) AutoCommit(b bool) *RabbitMQBuilder {
-	r.autocommit = b
-	return r
-}
-
-func (r *RabbitMQBuilder) WorkerPool(n int) *RabbitMQBuilder {
-	r.workerPool = n
-	return r
-}
-
-func (r *RabbitMQBuilder) Build() *rabbitMQRouter {
-	return &rabbitMQRouter{
-		queue:      r.queueName,
-		timeout:    r.timeout,
-		autoCommit: r.autocommit,
-		name:       r.workerName,
-		handler:    r.handler,
-		workerPool: r.workerPool,
-		connection: r.conn,
-	}
-}
-
-func NewRabbitMQBuilder(name, queue string, handler HandlerFunction, conn *amqp.Connection) *RabbitMQBuilder {
-	return &RabbitMQBuilder{
-		workerName: name,
-		queueName:  queue,
-		timeout:    time.Second * 30,
-		autocommit: false,
-		handler:    handler,
-		workerPool: 10,
-		conn:       conn,
-	}
-}
-
 func NewConnectRabbitMQ(uri string) (*amqp.Connection, error) {
 	conn, err := amqp.Dial(uri)
 	if err != nil {
@@ -137,4 +89,42 @@ func NewConnectRabbitMQ(uri string) (*amqp.Connection, error) {
 		return nil, err
 	}
 	return conn, nil
+}
+
+func NewRabbitMQRouter(queue, name string, conn *amqp.Connection, handler HandlerFunction, options ...RabbitMQRouterOptions) Router {
+	router := &rabbitMQRouter{
+		timeout:    5 * time.Second,
+		autoCommit: false,
+		queue:      queue,
+		name:       name,
+		workerPool: 1,
+		handler:    handler,
+		connection: conn,
+	}
+
+	for _, fn := range options {
+		fn(router)
+	}
+
+	return router
+}
+
+type RabbitMQRouterOptions func(*rabbitMQRouter)
+
+func WithTimeout(t time.Duration) RabbitMQRouterOptions {
+	return func(r *rabbitMQRouter) {
+		r.timeout = t
+	}
+}
+
+func WithAutoCommit() RabbitMQRouterOptions {
+	return func(r *rabbitMQRouter) {
+		r.autoCommit = true
+	}
+}
+
+func WithMultiplierWorkerPool(n int) RabbitMQRouterOptions {
+	return func(r *rabbitMQRouter) {
+		r.workerPool = r.workerPool * n
+	}
 }
